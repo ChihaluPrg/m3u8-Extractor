@@ -1,141 +1,97 @@
-import tkinter as tk
-from tkinter import filedialog
-from plyer import notification  # plyer通知をインポート
+import os
+import subprocess
 import requests
 from bs4 import BeautifulSoup
-import subprocess
-import threading  # スレッドを使用
+from plyer import notification
+from pathlib import Path  # ダウンロードフォルダの取得に利用
+
+
+# ダウンロードフォルダのパスを取得
+def get_download_folder():
+    return str(Path.home() / "Downloads")  # ユーザーディレクトリのダウンロードフォルダ
 
 
 # contentURLを取得する関数
-def fetch_content_url():
-    url = url_entry.get()  # 入力されたURLを取得
-    if not url:
-        messagebox.showerror("エラー", "URLを入力してください。")
-        return
-
+def fetch_content_url(url):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.0.0 Safari/537.36'
     }
-
     try:
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
             meta_tag = soup.find('meta', {'itemprop': 'contentURL'})
             if meta_tag and 'content' in meta_tag.attrs:
-                content_url = meta_tag['content']
-                result_label.config(text=f"contentURL: {content_url}")
-                return content_url  # contentURLを返す
+                return meta_tag['content']
             else:
-                messagebox.showerror("エラー", "指定されたmetaタグが見つかりませんでした。")
+                print("エラー: 指定されたmetaタグが見つかりませんでした。")
+                return None
         else:
-            messagebox.showerror("エラー", f"HTMLの取得に失敗しました。ステータスコード: {response.status_code}")
+            print(f"エラー: HTMLの取得に失敗しました。ステータスコード: {response.status_code}")
+            return None
     except Exception as e:
-        messagebox.showerror("エラー", f"エラーが発生しました: {e}")
+        print(f"エラーが発生しました: {e}")
+        return None
 
 
-# ダウンロードを開始する関数
-def start_download():
-    content_url = fetch_content_url()  # contentURLを取得
-    if not content_url:
-        return
-
-    # 形式を選択
-    file_format = format_var.get()  # 選択された形式を取得
-
-    # 保存先とファイル名を指定するダイアログを開く
-    save_path = filedialog.asksaveasfilename(defaultextension=f".{file_format}",
-                                             filetypes=[(f"{file_format.upper()} files", f"*.{file_format}")])
-    if not save_path:
-        return  # 保存先が選ばれなかった場合
-
-    # FFmpegコマンドを構築
-    if file_format == 'mp3':
-        command = [
-            "ffmpeg",
-            "-i", content_url,
-            "-vn",  # 動画を無視
-            "-acodec", "libmp3lame",  # MP3エンコード
-            "-ab", "192k",  # ビットレート指定
-            save_path
-        ]
-    elif file_format == 'mp4':
-        command = [
-            "ffmpeg",
-            "-i", content_url,
-            "-c", "copy",
-            "-bsf:a", "aac_adtstoasc",
-            save_path
-        ]
-    elif file_format == 'wav':
-        command = [
-            "ffmpeg",
-            "-i", content_url,
-            "-vn",  # 動画を無視
-            "-acodec", "pcm_s16le",  # WAVエンコード
-            save_path
-        ]
-
-    # ダウンロード開始の通知を表示
-    notification.notify(
-        title='ダウンロード開始',
-        message='ダウンロードが開始されました。',
-        timeout=5  # 5秒間表示
-    )
-
-    # ダウンロードをバックグラウンドスレッドで実行
-    download_thread = threading.Thread(target=run_ffmpeg, args=(command, save_path))
-    download_thread.start()
-
-
-# FFmpegをバックグラウンドで実行する関数
-def run_ffmpeg(command, save_path):
+# FFmpegを実行する関数
+def run_ffmpeg(input_url, save_path):
+    command = [
+        "ffmpeg",  # FFmpegの実行ファイル名（適宜修正）
+        "-i", input_url,
+        "-vn",  # 動画を無視
+        "-acodec", "libmp3lame",  # MP3エンコード
+        "-ab", "192k",  # ビットレート指定
+        save_path
+    ]
     try:
-        # subprocessでFFmpegを実行
         subprocess.run(command, check=True)
-
-        # ダウンロード完了の通知を表示
+        print(f"ダウンロード完了しました: {save_path}")
         notification.notify(
             title='ダウンロード完了',
-            message=f'{save_path} へのダウンロードが完了しました。',
-            timeout=5  # 5秒間表示
+            message=f'ダウンロードが完了しました: {save_path}',
+            timeout=5
         )
     except subprocess.CalledProcessError as e:
-        messagebox.showerror("エラー", f"FFmpegエラー: {e}")
+        print(f"エラー: FFmpegエラー: {e}")
+        notification.notify(
+            title='エラー',
+            message=f"FFmpegエラー: {e}",
+            timeout=5
+        )
 
 
-# GUIのセットアップ
-root = tk.Tk()
-root.title("Video Source Extractor")
+# メイン関数
+def main():
+    download_folder = get_download_folder()
+    print(f"デフォルトの保存先は: {download_folder}")
 
-# URL入力ラベルとテキストボックス
-url_label = tk.Label(root, text="対象のURLを入力:")
-url_label.pack(padx=10, pady=5)
+    while True:
+        print("対象のURLを入力してください (空欄で終了):")
+        url = input().strip()
+        if not url:
+            print("プログラムを終了します。")
+            break
 
-url_entry = tk.Entry(root, width=50)
-url_entry.pack(padx=10, pady=5)
+        # contentURL取得
+        content_url = fetch_content_url(url)
+        if not content_url:
+            print("URLの取得に失敗しました。再度URLを入力してください。")
+            continue
 
-# 結果表示ラベル
-result_label = tk.Label(root, text="結果がここに表示されます", wraplength=400)
-result_label.pack(padx=10, pady=10)
+        # 保存先のファイル名を指定
+        print("保存ファイル名を入力してください (例: output.mp3):")
+        file_name = input().strip()
+        if not file_name:
+            print("エラー: ファイル名が指定されていません。")
+            continue
 
-# contentURLを取得ボタン
-fetch_button = tk.Button(root, text="contentURLを取得", command=fetch_content_url)
-fetch_button.pack(padx=10, pady=10)
+        save_path = os.path.join(download_folder, file_name)
 
-# 形式選択ラベルとドロップダウンメニュー
-format_label = tk.Label(root, text="保存形式を選択:")
-format_label.pack(padx=10, pady=5)
+        # ダウンロード開始
+        print(f"ダウンロードを開始します: {save_path}")
+        run_ffmpeg(content_url, save_path)
 
-format_var = tk.StringVar(root)
-format_var.set("mp4")  # デフォルト形式
-format_menu = tk.OptionMenu(root, format_var, "mp4", "mp3", "wav")
-format_menu.pack(padx=10, pady=5)
 
-# ダウンロード開始ボタン
-download_button = tk.Button(root, text="ダウンロード開始", command=start_download)
-download_button.pack(padx=10, pady=10)
-
-# アプリケーションを開始
-root.mainloop()
+if __name__ == "__main__":
+    main()
